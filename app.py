@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas as pd
 import math
@@ -177,6 +178,73 @@ def fundamentals(ticker):
         "dividend_yield": _safe("dividendYield"),
         "roa": _safe("returnOnAssets"),
     })
+
+
+@app.route("/sp500/tickers")
+def sp500_tickers():
+    try:
+        table = pd.read_html(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+            storage_options={"User-Agent": "Mozilla/5.0"},
+        )[0]
+        tickers = table["Symbol"].str.replace(".", "-", regex=False).tolist()
+        return jsonify({"count": len(tickers), "tickers": tickers})
+    except Exception as exc:
+        return jsonify({"error": "Could not fetch S&P 500 ticker list.", "detail": str(exc)}), 500
+
+
+def _fetch_fundamentals_for(ticker):
+    """Fetch fundamentals for a single ticker. Returns dict or None on failure."""
+    try:
+        info = yf.Ticker(ticker).info
+        if not info:
+            return None
+
+        def _safe(key):
+            val = info.get(key)
+            return None if val is None or (isinstance(val, float) and math.isnan(val)) else val
+
+        return {
+            "ticker": ticker,
+            "sector": _safe("sector"),
+            "industry": _safe("industry"),
+            "market_cap": _safe("marketCap"),
+            "price": _safe("currentPrice") or _safe("regularMarketPrice"),
+            "revenue_ttm": _safe("totalRevenue"),
+            "eps": _safe("trailingEps"),
+            "pe_ratio": _safe("trailingPE"),
+            "debt_to_equity": _safe("debtToEquity"),
+            "book_value_per_share": _safe("bookValue"),
+            "levered_fcf": _safe("freeCashflow"),
+            "dividend_yield": _safe("dividendYield"),
+            "roa": _safe("returnOnAssets"),
+        }
+    except Exception:
+        return None
+
+
+@app.route("/fundamentals/batch")
+def fundamentals_batch():
+    tickers_raw = request.args.get("tickers", "")
+    tickers = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()]
+
+    if not tickers:
+        return jsonify({"error": "Provide tickers via ?tickers=AAPL,MSFT"}), 400
+    if len(tickers) > 100:
+        return jsonify({"error": "Maximum 100 tickers per request."}), 400
+
+    results = []
+    # 5 parallel workers — fast enough without hammering Yahoo Finance
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(_fetch_fundamentals_for, t): t for t in tickers}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                results.append(result)
+
+    # Sort to preserve consistent ordering
+    results.sort(key=lambda x: x["ticker"])
+    return jsonify({"fetched": len(results), "total_requested": len(tickers), "data": results})
 
 
 @app.route("/compare")
