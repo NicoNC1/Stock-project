@@ -1,9 +1,11 @@
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 import yfinance as yf
 import pandas as pd
 import math
 
 app = Flask(__name__)
+CORS(app)
 
 
 TRADING_DAYS_PER_YEAR = 252
@@ -141,6 +143,40 @@ def stock(ticker):
         return jsonify({"error": f"No data found for ticker '{ticker.upper()}'."}), 404
 
     return jsonify(_history_records(data))
+
+
+@app.route("/fundamentals/<ticker>")
+def fundamentals(ticker):
+    ticker = ticker.upper()
+    try:
+        info = yf.Ticker(ticker).info
+    except yf.exceptions.YFRateLimitError:
+        return jsonify({"error": "Yahoo Finance rate limit reached. Please retry in a moment."}), 429
+    except Exception as exc:
+        return jsonify({"error": f"Could not retrieve data for ticker '{ticker}'.", "detail": str(exc)}), 404
+
+    if not info or (info.get("regularMarketPrice") is None and info.get("currentPrice") is None):
+        return jsonify({"error": f"No data found for ticker '{ticker}'."}), 404
+
+    def _safe(key):
+        val = info.get(key)
+        return None if val is None or (isinstance(val, float) and math.isnan(val)) else val
+
+    return jsonify({
+        "ticker": ticker,
+        "sector": _safe("sector"),
+        "industry": _safe("industry"),
+        "market_cap": _safe("marketCap"),
+        "price": _safe("currentPrice") or _safe("regularMarketPrice"),
+        "revenue_ttm": _safe("totalRevenue"),
+        "eps": _safe("trailingEps"),
+        "pe_ratio": _safe("trailingPE"),
+        "debt_to_equity": _safe("debtToEquity"),
+        "book_value_per_share": _safe("bookValue"),
+        "levered_fcf": _safe("freeCashflow"),
+        "dividend_yield": _safe("dividendYield"),
+        "roa": _safe("returnOnAssets"),
+    })
 
 
 @app.route("/compare")
