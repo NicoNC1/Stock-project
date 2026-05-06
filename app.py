@@ -183,11 +183,18 @@ def fundamentals(ticker):
 @app.route("/sp500/tickers")
 def sp500_tickers():
     try:
-        table = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            storage_options={"User-Agent": "Mozilla/5.0"},
-        )[0]
-        tickers = table["Symbol"].str.replace(".", "-", regex=False).tolist()
+        # Primary source: CSV (no HTML parser dependency)
+        table = pd.read_csv("https://datahub.io/core/s-and-p-500-companies/r/constituents.csv")
+        if "Symbol" not in table.columns:
+            raise ValueError("Symbol column not found in S&P 500 CSV.")
+        tickers = table["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+
+        # Fallback if CSV source is temporarily unavailable
+        if not tickers:
+            wiki = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
+            tickers = wiki["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+
+        tickers = sorted(set(tickers))
         return jsonify({"count": len(tickers), "tickers": tickers})
     except Exception as exc:
         return jsonify({"error": "Could not fetch S&P 500 ticker list.", "detail": str(exc)}), 500
