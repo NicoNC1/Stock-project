@@ -10,6 +10,7 @@ CORS(app)
 
 
 TRADING_DAYS_PER_YEAR = 252
+SP500_FINANCIALS_CSV_URL = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies-financials/main/data/constituents-financials.csv"
 
 
 def _download_history(ticker, period="1y", interval="1d"):
@@ -78,6 +79,16 @@ def _history_records(data):
         working["DailyReturn"] = working["Close"].pct_change()
 
     return working.to_dict(orient="records")
+
+
+def _to_number(value):
+    if value is None:
+        return None
+    try:
+        number = float(value)
+        return None if math.isnan(number) else number
+    except (TypeError, ValueError):
+        return None
 
 
 @app.route("/")
@@ -198,6 +209,49 @@ def sp500_tickers():
         return jsonify({"count": len(tickers), "tickers": tickers})
     except Exception as exc:
         return jsonify({"error": "Could not fetch S&P 500 ticker list.", "detail": str(exc)}), 500
+
+
+@app.route("/fundamentals/sp500")
+def fundamentals_sp500():
+    """Stable free bulk fundamentals source for Power BI (no API key, no rate limits)."""
+    try:
+        table = pd.read_csv(SP500_FINANCIALS_CSV_URL)
+    except Exception as exc:
+        return jsonify({"error": "Could not fetch S&P 500 fundamentals dataset.", "detail": str(exc)}), 500
+
+    required_columns = {
+        "Symbol", "Sector", "Price", "Market Cap", "Earnings/Share", "Price/Earnings", "Dividend Yield", "Price/Book"
+    }
+    if not required_columns.issubset(set(table.columns)):
+        return jsonify({"error": "S&P 500 fundamentals dataset schema changed unexpectedly."}), 500
+
+    records = []
+    for _, row in table.iterrows():
+        price = _to_number(row.get("Price"))
+        price_to_book = _to_number(row.get("Price/Book"))
+        book_value = None
+        if price is not None and price_to_book not in (None, 0):
+            book_value = price / price_to_book
+
+        records.append(
+            {
+                "ticker": str(row.get("Symbol", "")).replace(".", "-").upper(),
+                "sector": row.get("Sector"),
+                "industry": None,
+                "market_cap": _to_number(row.get("Market Cap")),
+                "price": price,
+                "revenue_ttm": None,
+                "eps": _to_number(row.get("Earnings/Share")),
+                "pe_ratio": _to_number(row.get("Price/Earnings")),
+                "debt_to_equity": None,
+                "book_value_per_share": book_value,
+                "levered_fcf": None,
+                "dividend_yield": _to_number(row.get("Dividend Yield")),
+                "roa": None,
+            }
+        )
+
+    return jsonify({"fetched": len(records), "data": records, "source": "datasets/s-and-p-500-companies-financials"})
 
 
 def _fetch_fundamentals_for(ticker):
