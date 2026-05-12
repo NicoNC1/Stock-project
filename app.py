@@ -202,10 +202,27 @@ def sp500_tickers():
 
 def _fetch_fundamentals_for(ticker):
     """Fetch fundamentals for a single ticker. Returns dict or None on failure."""
+    def _empty_row():
+        return {
+            "ticker": ticker,
+            "sector": None,
+            "industry": None,
+            "market_cap": None,
+            "price": None,
+            "revenue_ttm": None,
+            "eps": None,
+            "pe_ratio": None,
+            "debt_to_equity": None,
+            "book_value_per_share": None,
+            "levered_fcf": None,
+            "dividend_yield": None,
+            "roa": None,
+        }
+
     try:
         info = yf.Ticker(ticker).info
         if not info:
-            return None
+            return _empty_row()
 
         def _safe(key):
             val = info.get(key)
@@ -227,7 +244,7 @@ def _fetch_fundamentals_for(ticker):
             "roa": _safe("returnOnAssets"),
         }
     except Exception:
-        return None
+        return _empty_row()
 
 
 @app.route("/fundamentals/batch")
@@ -246,8 +263,7 @@ def fundamentals_batch():
         futures = {executor.submit(_fetch_fundamentals_for, t): t for t in tickers}
         for future in as_completed(futures):
             result = future.result()
-            if result is not None:
-                results.append(result)
+            results.append(result)
 
     # Sort to preserve consistent ordering
     results.sort(key=lambda x: x["ticker"])
