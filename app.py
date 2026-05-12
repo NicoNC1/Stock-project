@@ -11,6 +11,7 @@ CORS(app)
 
 TRADING_DAYS_PER_YEAR = 252
 SP500_FINANCIALS_CSV_URL = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies-financials/main/data/constituents-financials.csv"
+SP500_CONSTITUENTS_CSV_URL = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
 
 
 def _download_history(ticker, period="1y", interval="1d"):
@@ -216,6 +217,7 @@ def fundamentals_sp500():
     """Stable free bulk fundamentals source for Power BI (no API key, no rate limits)."""
     try:
         table = pd.read_csv(SP500_FINANCIALS_CSV_URL)
+        constituents = pd.read_csv(SP500_CONSTITUENTS_CSV_URL)
     except Exception as exc:
         return jsonify({"error": "Could not fetch S&P 500 fundamentals dataset.", "detail": str(exc)}), 500
 
@@ -225,8 +227,15 @@ def fundamentals_sp500():
     if not required_columns.issubset(set(table.columns)):
         return jsonify({"error": "S&P 500 fundamentals dataset schema changed unexpectedly."}), 500
 
+    industry_map = {}
+    if {"Symbol", "GICS Sub-Industry"}.issubset(set(constituents.columns)):
+        for _, row in constituents.iterrows():
+            symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
+            industry_map[symbol] = row.get("GICS Sub-Industry")
+
     records = []
     for _, row in table.iterrows():
+        symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
         price = _to_number(row.get("Price"))
         price_to_book = _to_number(row.get("Price/Book"))
         book_value = None
@@ -235,9 +244,9 @@ def fundamentals_sp500():
 
         records.append(
             {
-                "ticker": str(row.get("Symbol", "")).replace(".", "-").upper(),
+                "ticker": symbol,
                 "sector": row.get("Sector"),
-                "industry": None,
+                "industry": industry_map.get(symbol),
                 "market_cap": _to_number(row.get("Market Cap")),
                 "price": price,
                 "revenue_ttm": None,
@@ -251,7 +260,14 @@ def fundamentals_sp500():
             }
         )
 
-    return jsonify({"fetched": len(records), "data": records, "source": "datasets/s-and-p-500-companies-financials"})
+    return jsonify(
+        {
+            "fetched": len(records),
+            "data": records,
+            "source": "datasets/s-and-p-500-companies-financials + datahub constituents",
+            "free_source_missing_fields": ["revenue_ttm", "debt_to_equity", "levered_fcf", "roa"],
+        }
+    )
 
 
 def _fetch_fundamentals_for(ticker):
