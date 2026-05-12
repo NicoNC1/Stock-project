@@ -92,6 +92,12 @@ def _to_number(value):
         return None
 
 
+def _safe_ratio(numerator, denominator):
+    if numerator is None or denominator in (None, 0):
+        return None
+    return numerator / denominator
+
+
 @app.route("/")
 def home():
     return jsonify(
@@ -237,6 +243,7 @@ def fundamentals_sp500():
     for _, row in table.iterrows():
         symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
         price = _to_number(row.get("Price"))
+        eps = _to_number(row.get("Earnings/Share"))
         price_to_book = _to_number(row.get("Price/Book"))
         book_value = None
         if price is not None and price_to_book not in (None, 0):
@@ -250,8 +257,8 @@ def fundamentals_sp500():
                 "market_cap": _to_number(row.get("Market Cap")),
                 "price": price,
                 "revenue_ttm": None,
-                "eps": _to_number(row.get("Earnings/Share")),
-                "pe_ratio": _to_number(row.get("Price/Earnings")),
+                "eps": eps,
+                "pe_ratio": _safe_ratio(price, eps),
                 "debt_to_equity": None,
                 "book_value_per_share": book_value,
                 "levered_fcf": None,
