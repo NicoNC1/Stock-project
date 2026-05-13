@@ -222,29 +222,35 @@ def sp500_tickers():
 def fundamentals_sp500():
     """Stable free bulk fundamentals source for Power BI (no API key, no rate limits)."""
     try:
-        table = pd.read_csv(SP500_FINANCIALS_CSV_URL)
+        financials = pd.read_csv(SP500_FINANCIALS_CSV_URL)
         constituents = pd.read_csv(SP500_CONSTITUENTS_CSV_URL)
     except Exception as exc:
         return jsonify({"error": "Could not fetch S&P 500 fundamentals dataset.", "detail": str(exc)}), 500
 
-    required_columns = {
+    required_financial_columns = {
         "Symbol", "Sector", "Price", "Market Cap", "Earnings/Share", "Price/Earnings", "Dividend Yield", "Price/Book"
     }
-    if not required_columns.issubset(set(table.columns)):
+    if not required_financial_columns.issubset(set(financials.columns)):
         return jsonify({"error": "S&P 500 fundamentals dataset schema changed unexpectedly."}), 500
 
-    industry_map = {}
-    if {"Symbol", "GICS Sub-Industry"}.issubset(set(constituents.columns)):
-        for _, row in constituents.iterrows():
-            symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
-            industry_map[symbol] = row.get("GICS Sub-Industry")
+    required_constituent_columns = {"Symbol", "GICS Sector", "GICS Sub-Industry"}
+    if not required_constituent_columns.issubset(set(constituents.columns)):
+        return jsonify({"error": "S&P 500 constituents schema changed unexpectedly."}), 500
+
+    financials_map = {}
+    for _, row in financials.iterrows():
+        symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
+        if symbol:
+            financials_map[symbol] = row
 
     records = []
-    for _, row in table.iterrows():
-        symbol = str(row.get("Symbol", "")).replace(".", "-").upper()
-        price = _to_number(row.get("Price"))
-        eps = _to_number(row.get("Earnings/Share"))
-        price_to_book = _to_number(row.get("Price/Book"))
+    for _, c_row in constituents.iterrows():
+        symbol = str(c_row.get("Symbol", "")).replace(".", "-").upper()
+        f_row = financials_map.get(symbol)
+
+        price = _to_number(f_row.get("Price")) if f_row is not None else None
+        eps = _to_number(f_row.get("Earnings/Share")) if f_row is not None else None
+        price_to_book = _to_number(f_row.get("Price/Book")) if f_row is not None else None
         book_value = None
         if price is not None and price_to_book not in (None, 0):
             book_value = price / price_to_book
@@ -252,9 +258,9 @@ def fundamentals_sp500():
         records.append(
             {
                 "ticker": symbol,
-                "sector": row.get("Sector"),
-                "industry": industry_map.get(symbol),
-                "market_cap": _to_number(row.get("Market Cap")),
+                "sector": c_row.get("GICS Sector"),
+                "industry": c_row.get("GICS Sub-Industry"),
+                "market_cap": _to_number(f_row.get("Market Cap")) if f_row is not None else None,
                 "price": price,
                 "revenue_ttm": None,
                 "eps": eps,
@@ -262,7 +268,7 @@ def fundamentals_sp500():
                 "debt_to_equity": None,
                 "book_value_per_share": book_value,
                 "levered_fcf": None,
-                "dividend_yield": _to_number(row.get("Dividend Yield")),
+                "dividend_yield": _to_number(f_row.get("Dividend Yield")) if f_row is not None else None,
                 "roa": None,
             }
         )
